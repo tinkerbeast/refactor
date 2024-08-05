@@ -34,14 +34,15 @@ class Refactor:
         self.line_cnt = len(lines)
 
     def text(self, node:ast.AST) -> str:
-        if hasattr(node, 'lineno'):
-            b = self.line_map[node.lineno - 1] + node.col_offset
-            e = self.line_map[node.end_lineno - 1] + node.end_col_offset
-            return self.data[b:e]
-        else:
+        if not hasattr(node, 'lineno'):
             raise ValueError('Node cannot be converted to text')
+        b = self.line_map[node.lineno - 1] + node.col_offset
+        e = self.line_map[node.end_lineno - 1] + node.end_col_offset
+        return self.data[b:e]
 
     def sub(pattern, repl, node:ast.AST, count=0, flags=0) -> None:
+        if not hasattr(node, 'lineno'):
+            raise ValueError('Node cannot be converted to text')
         b = self.line_map[node.lineno - 1] + node.col_offset
         e = self.line_map[node.end_lineno - 1] + node.end_col_offset
         out = re.sub(pattern, repl, self.text(node), count, flags)
@@ -58,9 +59,6 @@ class Refactor:
                 ast.UAdd, ast.USub, ast.withitem):
             return
         #
-        if (filters_type is ast.For):
-            filter_fn(getattr(node, 'target'), getattr(node, 'iter'),
-                    getattr(node, 'body'), getattr(node, 'orelse'))
         else:
             raise ValueError('Filter type not supported yet')
 
@@ -79,7 +77,7 @@ class Refactor:
                     self.walk_ast_(value, fn, node, level + 1)
         elif isinstance(node, list):
             for n in node:
-                self.walk_ast_(n, fn, node, level + 1)
+                self.walk_ast_(n, fn, parent, level + 1)
         else:
             pass # terminal string values of tokens
 
