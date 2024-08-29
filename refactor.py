@@ -2,6 +2,7 @@ import ast
 import re
 
 from lxml.builder import E
+from lxml import etree as ET
 
 
 def load(src: str):
@@ -16,6 +17,7 @@ class Refactor:
         self.ast_idx = 0
         self.ast_map = dict()
         self.changes = []
+        self.xml_filter = []
 
     def load(self, src:str):
         # Read and parse source file.
@@ -37,8 +39,6 @@ class Refactor:
         self.line_cnt = len(lines)
         # Walk the AST
         self.xml = self.walk_ast_bottom_up_(self.ast, self.lxml_builder_fn_)
-        from lxml import etree as ET
-        print(ET.tostring(self.xml, pretty_print=True).decode('utf-8'))
         #print(ast.dump(self.ast, indent=2))
 
     def text(self, node:ast.AST) -> str:
@@ -59,7 +59,7 @@ class Refactor:
         self.changes.append((b, e, out))
 
     def lxml_builder_fn_(self, node: ast.AST|str, children):
-        print(node, type(node))
+        #print(node, type(node))
         # Filter out nodes which can't be converted to text.
         if type(node) in (ast.Add, ast.And, ast.BitAnd,
                 ast.BitOr, ast.BitXor, ast.comprehension, ast.Del, ast.Div,
@@ -171,28 +171,56 @@ class Refactor:
         return prev
 
     def map_str(self, pattern, repl, count=0, flags=0) -> str:
-        for i in self.flat_ast:
+        flat_ast = self.form_ast_list_from_xml_()
+        for i in flat_ast:
             self.sub_(pattern, repl, i[0], count, flags)
         new_data = self.collate_changes_()
         return new_data
 
-    def form_ast_list_by_idx(self, idxs):
-        self.flat_ast = [[self.ast_map[int(i)]] for i in idxs]
+    def map_fn(self, fn) -> str:
+        flat_ast = self.form_ast_list_from_xml_()
+        for i in flat_ast:
+            node = i[0]
+            if not hasattr(node, 'lineno'):
+                raise ValueError('Node cannot be converted to text')
+            b = self.line_map[node.lineno - 1] + node.col_offset
+            e = self.line_map[node.end_lineno - 1] + node.end_col_offset
+            out = fn(self.text(node), node)
+            self.changes.append((b, e, out))
+        new_data = self.collate_changes_()
+        return new_data
+
+
+    def xpath(self, path):
+        xout = []
+        if self.xml_filter:
+            for x in self.xml_filter:
+                xout.extend(x.xpath(path))
+        else:
+            xout = self.xml.xpath(path)
+        self.xml_filter = xout
+        return self
+
+    def form_ast_list_from_xml_(self):
+        ast_idxs = [int(e.attrib['idx_']) for e in self.xml_filter]
+        return [[self.ast_map[int(i)]] for i in ast_idxs]
+
+    def dump_xml(self):
+        if self.xml_filter:
+            for x in self.xml_filter:
+                print(ET.tostring(x, pretty_print=True).decode('utf-8'))
+        else:
+            print(ET.tostring(self.xml, pretty_print=True).decode('utf-8'))
         return self
 
     def dump(self):
-        for idx in range(len(self.flat_ast)):
-            i = self.flat_ast[idx]
+        flat_ast = self.form_ast_list_from_xml_()
+        for idx in range(len(flat_ast)):
+            i = flat_ast[idx]
             if not isinstance(i[0], ast.alias):
                 print(f'>{idx}: {i} {self.text(i[0])}<')
             else:
                 print(f'>{idx}: {i}: ???<')
-        return self
-
-    def dump2(self):
-        for idx in range(len(self.flat_ast)):
-            i = self.flat_ast[idx]
-            print(i[0])
         return self
 
 
