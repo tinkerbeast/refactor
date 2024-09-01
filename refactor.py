@@ -178,6 +178,10 @@ class Refactor:
         self.xml_filter = xout
         return self
 
+    def xml_map_fn(self, fn):
+        self.xml_filter = [fn(x) for x in self.xml_filter]
+        return self
+
     def form_ast_list_from_xml_(self):
         ast_idxs = [int(e.attrib['idx_']) for e in self.xml_filter]
         return [[self.ast_map[int(i)]] for i in ast_idxs]
