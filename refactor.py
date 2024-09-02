@@ -6,26 +6,56 @@ from lxml import etree as ET
 
 
 def load(src: str):
-    r = Refactor()
-    r.load(src)
-    return r
+    # Read and parse source file.
+    with open(src, 'r') as fd:
+        data = fd.read()
+    return Refactor(data)    
+
+def loads(data: str):
+    return Refactor(data)
+
+
+class Selection:
+
+    def __init__(self, xml, path: str):
+        self.xml_filter = xml.xpath(path)
+
+    def select(self, path: str):
+        xout = []
+        for x in self.xml_filter:
+            xout.extend(x.xpath(path))
+        self.xml_filter = xout
+        return self
+
+    def filter_fn(self, fn):
+        self.xml_filter = [x for x in self.xml_filter if fn(x)]
+        return self
+
+    def map_fn(self, fn):
+        self.xml_filter = [fn(x) for x in self.xml_filter]
+        return self
+
+    def union(self, sel):
+        self.xml_filter = list(set(self.xml_filter).union(set(sel.xml_filter)))
+        return self
+
+    def intersection(self, sel):
+        self.xml_filter = list(set(self.xml_filter).intersection(set(sel.xml_filter)))
+        return self
+
+    def difference(self, sel):
+        self.xml_filter = list(set(self.xml_filter).difference(set(sel.xml_filter)))
+        return self
 
 
 class Refactor:
 
-    def __init__(self):
+    def __init__(self, data: str):
         self.ast_idx = 0
         self.ast_map = dict()
         self.changes = []
-        self.xml_filter = []
-
-    def load(self, src: str):
-        # Read and parse source file.
-        with open(src, 'r') as fd:
-            data = fd.read()
-        return self.loads(data)
-
-    def loads(self, data: str):
+        self.ast_idxs = []
+        #
         self.data = data
         self.ast = ast.parse(self.data, mode='exec')
         # Map line numbers to byte index.
@@ -59,23 +89,15 @@ class Refactor:
 
     def lxml_builder_fn_(self, node: ast.AST | str, children):
         # print(node, type(node))
-        # Filter out nodes which can't be converted to text.
-        # TODO(rishigos): Group AST token into similar groups
-        if type(node) in (
-            ast.Add, ast.And, ast.BitAnd, ast.BitOr, ast.BitXor,
-            ast.comprehension, ast.match_case, ast.withitem,
-            ast.Del, ast.Div, ast.Eq, ast.FloorDiv, ast.Gt, ast.GtE, ast.In,
-            ast.Invert, ast.Is, ast.IsNot, ast.Load, ast.LShift, ast.Lt, ast.LtE,
-            ast.Mod, ast.Mult, ast.Not, ast.NotEq, ast.NotIn, ast.Or,
-            ast.Pow, ast.RShift, ast.Store, ast.Sub, ast.UAdd, ast.USub,
-        ):
-            return None
-        # Remove None from children
-        children = [c for c in children if c is not None]
+        # TODO(rishin): Remove this - This check validates that new AST 
+        #       parsing mechanism doesn't have None children.
+        if any([c is None for c in children]): raise ValueError("None children")
+        # Return equivalent XML node.
         if isinstance(node, str):
+            # A str type node represents container tags for nodes with list 
+            # type attributes (eg. a function body).
             return E('_' + node, *children)
         elif isinstance(node, ast.AST):
-            # print(node._attributes) # TODO: decide on line numbers
             self.ast_idx += 1
             self.ast_map[self.ast_idx] = node
             attrs = {'idx_': str(self.ast_idx)}
@@ -85,31 +107,16 @@ class Refactor:
                 if isinstance(sub_node, ast.AST) or isinstance(sub_node, list):
                     pass
                 else:
+                    # TODO(rishin): Document when we hit this.
                     attrs[f] = str(sub_node)
-            #
+            # Populate AST context like line number, column, etc.
             for a in node._attributes:
                 attrs[a] = str(getattr(node, a))
-            # For the xml node
+            # For the xml node.
             ntype = type(node).__name__
             return E(ntype, *children, **attrs)
         else:
             raise ValueError('Invalid parser implementation')
-
-    def walk_ast_top_down_(self, node, fn, parent, level):
-        # TODO(rishigos): Remove this - Kept for historic reasons
-        # if isinstance(node, ast.AST):
-        #    if parent is not None:
-        #        fn(node, parent, level)
-        #    for name in node._fields:
-        #        value = getattr(node, name, None)
-        #        if value is not None:
-        #            self.walk_ast_top_down_(value, fn, node, level + 1)
-        # elif isinstance(node, list):
-        #    for n in node:
-        #        self.walk_ast_top_down_(n, fn, parent, level + 1)
-        # else:
-        #    pass # terminal string values of tokens
-        pass
 
     def walk_ast_bottom_up_(self, node, fn):
         if not isinstance(node, ast.AST):
@@ -168,23 +175,14 @@ class Refactor:
         new_data = self.collate_changes_()
         return new_data
 
-    def xpath(self, path):
-        xout = []
-        if self.xml_filter:
-            for x in self.xml_filter:
-                xout.extend(x.xpath(path))
-        else:
-            xout = self.xml.xpath(path)
-        self.xml_filter = xout
-        return self
+    def select(self, path: str):
+        return Selection(self.xml, path)
 
-    def xml_map_fn(self, fn):
-        self.xml_filter = [fn(x) for x in self.xml_filter]
-        return self
+    def filter(self, sel: Selection):
+        self.ast_idxs = [int(e.attrib['idx_']) for e in sel.xml_filter]
 
     def form_ast_list_from_xml_(self):
-        ast_idxs = [int(e.attrib['idx_']) for e in self.xml_filter]
-        return [[self.ast_map[int(i)]] for i in ast_idxs]
+        return [[self.ast_map[int(i)]] for i in self.ast_idxs]
 
     def dump_xml(self):
         if self.xml_filter:
