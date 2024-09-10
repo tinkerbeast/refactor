@@ -46,6 +46,11 @@ class Selection:
     def difference(self, sel):
         self.xml_filter = list(set(self.xml_filter).difference(set(sel.xml_filter)))
         return self
+    
+    def dump_xml(self):
+        for x in self.xml_filter:
+            print(ET.tostring(x, pretty_print=True).decode('utf-8'))
+        return self
 
 
 class Refactor:
@@ -76,16 +81,6 @@ class Refactor:
         b = self.line_map[node.lineno - 1] + node.col_offset
         e = self.line_map[node.end_lineno - 1] + node.end_col_offset
         return self.data[b:e]
-
-    def sub_(self, pattern, repl, node: ast.AST, count=0, flags=0) -> None:
-        if not hasattr(node, 'lineno'):
-            raise ValueError('Node cannot be converted to text')
-        b = self.line_map[node.lineno - 1] + node.col_offset
-        e = self.line_map[node.end_lineno - 1] + node.end_col_offset
-        # print((pattern, repl, self.text(node)))
-        out = re.sub(pattern, repl, self.text(node), count, flags)
-        # print((b, e, out))
-        self.changes.append((b, e, out))
 
     def lxml_builder_fn_(self, node: ast.AST | str, children):
         # print(node, type(node))
@@ -142,7 +137,7 @@ class Refactor:
         for i in range(1, len(overlaps)):
             overlaps[i] += overlaps[i - 1]
             if overlaps[i] > 1:
-                raise ValueError('Overlapping changes cannot be processed')
+                raise ValueError('Overlapping changes cannot be processed', i, overlaps[i])
         sorted_changes = sorted(self.changes, key=lambda x: x[0])
         last_e = 0
         prev = ''
@@ -155,14 +150,20 @@ class Refactor:
         self.changes = []
         return prev
 
-    def map_str(self, pattern, repl, count=0, flags=0) -> str:
+    def modify_sub(self, pattern, repl, count=0, flags=0) -> str:
+        # TODO(rishin): Combine the modify_sub functions to reduce code.
         flat_ast = self.form_ast_list_from_xml_()
         for i in flat_ast:
-            self.sub_(pattern, repl, i[0], count, flags)
-        new_data = self.collate_changes_()
-        return new_data
+            node = i[0]
+            if not hasattr(node, 'lineno'):
+                raise ValueError('Node cannot be converted to text')
+            b = self.line_map[node.lineno - 1] + node.col_offset
+            e = self.line_map[node.end_lineno - 1] + node.end_col_offset
+            out = re.sub(pattern, repl, self.text(node), count, flags)
+            self.changes.append((b, e, out))
+        return self
 
-    def map_fn(self, fn) -> str:
+    def modify_sub_map(self, fn) -> str:
         flat_ast = self.form_ast_list_from_xml_()
         for i in flat_ast:
             node = i[0]
@@ -172,25 +173,20 @@ class Refactor:
             e = self.line_map[node.end_lineno - 1] + node.end_col_offset
             out = fn(self.text(node), node)
             self.changes.append((b, e, out))
-        new_data = self.collate_changes_()
-        return new_data
+        return self
 
     def select(self, path: str):
         return Selection(self.xml, path)
 
     def filter(self, sel: Selection):
         self.ast_idxs = [int(e.attrib['idx_']) for e in sel.xml_filter]
-
+        return self        
+    
+    def execute(self):
+        return self.collate_changes_()
+    
     def form_ast_list_from_xml_(self):
         return [[self.ast_map[int(i)]] for i in self.ast_idxs]
-
-    def dump_xml(self):
-        if self.xml_filter:
-            for x in self.xml_filter:
-                print(ET.tostring(x, pretty_print=True).decode('utf-8'))
-        else:
-            print(ET.tostring(self.xml, pretty_print=True).decode('utf-8'))
-        return self
 
     def dump(self):
         flat_ast = self.form_ast_list_from_xml_()

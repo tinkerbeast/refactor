@@ -1,9 +1,9 @@
-import refactor
-
 import ast
 import re
-import sys
-import uuid
+
+import lxml
+
+import refactor
 
 
 def decorate_fns(src, decorator):
@@ -16,7 +16,7 @@ def decorate_fns(src, decorator):
     # Search and replace
     r = refactor.load(src)
     s = r.select('//FunctionDef')
-    return r.filter(s).map_fn(indented_replace)    
+    return r.filter(s).modify_sub_map(indented_replace).execute()
 
 
 class ArgReplacer:
@@ -40,11 +40,11 @@ def annotate_fn_params(src, func_name, args, kwargs, ret):
     # Add return type
     r = refactor.load(src)
     s = r.select(f'//FunctionDef[@name="{func_name}"]')
-    out = r.filter(s).map_str(r'^(.+?):(.+)$', r'\1 -> {}:\2'.format(ret), flags=re.DOTALL)    
+    out = r.filter(s).modify_sub(r'^(.+?):(.+)$', r'\1 -> {}:\2'.format(ret), flags=re.DOTALL).execute()
     # Add type to args
     r = refactor.loads(out)
     s = r.select(f'//FunctionDef[@name="{func_name}"]//arg')
-    return r.filter(s).map_fn(ArgReplacer(args, kwargs))
+    return r.filter(s).modify_sub_map(ArgReplacer(args, kwargs)).execute()
 
 
 
@@ -69,14 +69,13 @@ def print_call_def_attr(node: lxml.etree._Element):
     print(node.attrib["attr"], enclosing[0].attrib["idx_"] if enclosing else None)
     return node
 
-def form_db():
+def form_db(src):    
+    r = refactor.load(src)
     print("Function defs and corresponding id")
-    r = refactor.load("temp.py")
     s = (
         r.select("//FunctionDef")
         .map_fn(print_fn_def)
-    )
-    
+    )    
     print("Calls and caller id")
     s = (
         r.select("//Call/Name")
