@@ -1,4 +1,5 @@
 import ast
+import enum
 import re
 
 from lxml.builder import E
@@ -9,7 +10,7 @@ def load(src: str):
     # Read and parse source file.
     with open(src, 'r') as fd:
         data = fd.read()
-    return Refactor(data)    
+    return Refactor(data)
 
 def loads(data: str):
     return Refactor(data)
@@ -51,6 +52,12 @@ class Selection:
         for x in self.xml_filter:
             print(ET.tostring(x, pretty_print=True).decode('utf-8'))
         return self
+
+
+class ChangeType(enum.Enum):
+    # NOTE: Collation algorithm depens on absoulute values of these
+    PREPEND = 1
+    SUBSTITUTE = 2
 
 
 class Refactor:
@@ -129,26 +136,47 @@ class Refactor:
         return fn(node, fn_children)
 
     def collate_changes_(self):
-        # Check for overlaps
+        # Check for overlaps in substitue type changes
+        # TODO(rishin): Should change overlap be calculated during addition?
         overlaps = [0] * len(self.data)
-        for b, e, _ in self.changes:
+        sub_changes = [c for c in self.changes if c[3] == ChangeType.SUBSTITUTE]
+        for b, e, _, _ in sub_changes:
             overlaps[b] += 1
             overlaps[e] -= 1
         for i in range(1, len(overlaps)):
             overlaps[i] += overlaps[i - 1]
             if overlaps[i] > 1:
                 raise ValueError('Overlapping changes cannot be processed', i, overlaps[i])
-        sorted_changes = sorted(self.changes, key=lambda x: x[0])
+        # Sort the changes by being offset and chage type (PREPEND < SUBSTITUTE)
+        sorted_changes = sorted(self.changes, key=lambda x: (x[0], x[3].value))
+        # Make the changes
         last_e = 0
         prev = ''
-        for b, e, out in sorted_changes:
-            # print(f'{prev}><{out}')
+        for b, e, out, c in sorted_changes:
             prev += self.data[last_e:b]
-            prev += out
-            last_e = e
+            if c == ChangeType.SUBSTITUTE:
+                prev += out
+                last_e = e
+            elif c == ChangeType.PREPEND:
+                prev += out
+                last_e = b
+            else:
+                raise ValueError("Unsupported operatin")
         prev += self.data[last_e:]
         self.changes = []
         return prev
+
+    def modify_prepend_map(self, fn) -> str:
+        flat_ast = self.form_ast_list_from_xml_()
+        for i in flat_ast:
+            node = i[0]
+            if not hasattr(node, 'lineno'):
+                raise ValueError('Node cannot be converted to text')
+            b = self.line_map[node.lineno - 1] + node.col_offset
+            e = self.line_map[node.end_lineno - 1] + node.end_col_offset
+            out = fn(self.text(node), node)
+            self.changes.append((b, e, out, ChangeType.PREPEND))
+        return self
 
     def modify_sub(self, pattern, repl, count=0, flags=0) -> str:
         # TODO(rishin): Combine the modify_sub functions to reduce code.
@@ -160,7 +188,7 @@ class Refactor:
             b = self.line_map[node.lineno - 1] + node.col_offset
             e = self.line_map[node.end_lineno - 1] + node.end_col_offset
             out = re.sub(pattern, repl, self.text(node), count, flags)
-            self.changes.append((b, e, out))
+            self.changes.append((b, e, out, ChangeType.SUBSTITUTE))
         return self
 
     def modify_sub_map(self, fn) -> str:
@@ -172,7 +200,7 @@ class Refactor:
             b = self.line_map[node.lineno - 1] + node.col_offset
             e = self.line_map[node.end_lineno - 1] + node.end_col_offset
             out = fn(self.text(node), node)
-            self.changes.append((b, e, out))
+            self.changes.append((b, e, out, ChangeType.SUBSTITUTE))
         return self
 
     def select(self, path: str):

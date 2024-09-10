@@ -9,14 +9,11 @@ import refactor
 def decorate_fns(src, decorator):
     # Function to return annotated body
     def indented_replace(txt, node: ast.AST):
-        p = '^.*$'
-        s = f'{decorator}\n' + ' ' * node.col_offset + '\\g<0>'
-        return re.sub(p, s, txt, flags=re.DOTALL)
-
+        return f'{decorator}\n' + ' ' * node.col_offset
     # Search and replace
     r = refactor.load(src)
     s = r.select('//FunctionDef')
-    return r.filter(s).modify_sub_map(indented_replace).execute()
+    return r.filter(s).modify_prepend_map(indented_replace).execute()
 
 
 class ArgReplacer:
