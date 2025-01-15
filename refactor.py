@@ -21,11 +21,21 @@ class Selection:
     def __init__(self, xml, path: str):
         self.xml_filter = xml.xpath(path)
 
+    def __len__(self):
+        return len(self.xml_filter)
+
     def select(self, path: str):
         xout = []
         for x in self.xml_filter:
             xout.extend(x.xpath(path))
         self.xml_filter = xout
+        return self
+
+    def slice(self, start: int, stop: int = None):
+        if stop is not None:
+            self.xml_filter = self.xml_filter[start:stop]
+        else:
+            self.xml_filter = [self.xml_filter[start]]
         return self
 
     def filter_fn(self, fn):
@@ -47,7 +57,7 @@ class Selection:
     def difference(self, sel):
         self.xml_filter = list(set(self.xml_filter).difference(set(sel.xml_filter)))
         return self
-    
+
     def dump_xml(self):
         for x in self.xml_filter:
             print(ET.tostring(x, pretty_print=True).decode('utf-8'))
@@ -89,14 +99,14 @@ class Refactor:
         e = self.line_map[node.end_lineno - 1] + node.end_col_offset
         return self.data[b:e]
 
-    def lxml_builder_fn_(self, node: ast.AST | str, children):
+    def lxml_builder_fn_(self, node: ast.AST, children):
         # print(node, type(node))
-        # TODO(rishin): Remove this - This check validates that new AST 
+        # TODO(rishin): Remove this - This check validates that new AST
         #       parsing mechanism doesn't have None children.
         if any([c is None for c in children]): raise ValueError("None children")
         # Return equivalent XML node.
         if isinstance(node, str):
-            # A str type node represents container tags for nodes with list 
+            # A str type node represents container tags for nodes with list
             # type attributes (eg. a function body).
             return E('_' + node, *children)
         elif isinstance(node, ast.AST):
@@ -116,13 +126,17 @@ class Refactor:
                 attrs[a] = str(getattr(node, a))
             # For the xml node.
             ntype = type(node).__name__
-            return E(ntype, *children, **attrs)
+            try:
+                return E(ntype, *children, **attrs)
+            except ValueError as e:
+                raise ValueError(e, ntype, children, attrs)
         else:
             raise ValueError('Invalid parser implementation')
 
     def walk_ast_bottom_up_(self, node, fn):
         if not isinstance(node, ast.AST):
-            raise ValueError('AST walking error')
+            #raise ValueError('AST walking error', type(node), node)
+            return fn(node, []) # TODO(rishin): Handle `global abc` case properly
         children = {name: getattr(node, name, None) for name in node._fields}
         fn_children = []
         for name, c in children.items():
@@ -208,11 +222,11 @@ class Refactor:
 
     def filter(self, sel: Selection):
         self.ast_idxs = [int(e.attrib['idx_']) for e in sel.xml_filter]
-        return self        
-    
+        return self
+
     def execute(self):
         return self.collate_changes_()
-    
+
     def form_ast_list_from_xml_(self):
         return [[self.ast_map[int(i)]] for i in self.ast_idxs]
 
